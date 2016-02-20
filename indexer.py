@@ -30,14 +30,13 @@ schemas = dict(
 
 
 class IndexerService(ServiceModule):
+    base_service_name = 'INDEXER'
     def __init__(self, index_path='.index',
                  schema_name='default-schema',
                  new_schema=schemas['def_schema'],
                  listen_host=None,
                  listen_port=None):
 
-        test = PeerModule.peer_from_service(self)
-        print("DIR: %s" % str(dir(test)))
         if new_schema is not None and index_path is None:
             msg = "Mush provide path for new index"
             raise ValueError(msg)
@@ -77,6 +76,7 @@ class IndexerService(ServiceModule):
         self.doc_count = 0
         self.idx_p_sec = 0.0
         service_name = IndexerService.get_service_name(self.schema_name)
+
         ServiceModule.__init__(self, host=listen_host, port=listen_port,
                                service_name=service_name,
                                respond_to_bcasts=True)
@@ -146,7 +146,8 @@ class IndexerService(ServiceModule):
     def cb_add_document(self, **doc):
         self.doc_queue.put(doc)
 
-    def cb_query(self, q_str, field=None, raw_results=True):
+    def cb_query(self, q_str, field=None, raw_results=False):
+        print("Query: %s" % q_str)
         if self.parser is None:
             self.parser = QueryParser(field, self.__index.schema)
 
@@ -175,18 +176,17 @@ def fetch_stats(host, port):
     return stats
 
 
-def cli_query(indexer=None, query_func=None,
-              query_args=[], query_kwargs={},
-              stats_func=None, ):
-    if query_func is None:
-        query_func = indexer.query
-        query_args = ["content"]
-        query_kwargs = {}
+def cli_query(query_func=None,
+              query_args=None,
+              query_kwargs=None,
+              stats_func=None):
+    query_args = {} if query_args is None else query_args
+    query_kwargs = {} if query_kwargs is None else query_kwargs
 
     while True:
         in_qry = input("Enter Query: ")
-        if in_qry == '\q': break
-
+        if in_qry == '\q':
+            break
         if in_qry == '\s' and stats_func:
             print(stats_func())
         else:
@@ -195,25 +195,16 @@ def cli_query(indexer=None, query_func=None,
             print("Found %d results" % len(results))
             print(("\n\t").join((str(r) for r in results)))
 
-def remote_cli_query(host, port):
-    print("Connecting")
-    f = lambda q: NetCore.exec_remote_callback(host, port,
-                                               cb_func='query',
-                                               cb_kwargs=dict(q_str=q,
-                                                              field='content',
-                                                              raw_results=False))
-
-    sf = lambda : fetch_stats(host, port)
-
-    cli_query(query_func=f, stats_func=sf)
-
-
 
 if __name__ == "__main__":
+    ops = ['query', 'service']
 
     parser = argparse.ArgumentParser(description='Indexing Service')
     parser.add_argument("operation", metavar='O', type=str,
-                        help="service, query")
+                        help=", ".join(ops))
+    parser.add_argument('--index_files', metavar='I', type=str,
+                        default=None,
+                        help="Path to files to be indexed")
     parser.add_argument('--index_path', metavar='I', type=str,
                         default='.shelf_index',
                         help="Path to index directory to read on launch")
@@ -229,38 +220,39 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    ops = ['query', 'service']
-    if args.operation not in ops:
+    #########
+    ## Query Remote instance
+    if args.operation == 'query':
+        re_indexer = IndexerService.quick_connect()
+        print("Connected!")
+
+        cli_query(query_func=re_indexer.query,
+                  stats_func=re_indexer.get_stats)
+        sys.exit(0)
+    elif args.operation == 'service':
+        schema = schemas.get(args.schema, None)
+        schema = schemas['def_schema'] if schema is None else schema
+
+        #########
+        ## Start instance on this machine
+        indexer = IndexerService(index_path=args.index_path,
+                                 new_schema=schema,
+                                 listen_host=args.service_host,
+                                 listen_port=args.service_port)
+        cli_query(query_func=indexer.cb_query, query_args=["content"])
+    elif args.operation == 'index':
+        #print(args.operation_args)
+        file_to_index = args.operation_args
+        doc = dict(title=file_to_index,
+                   comment='just_a test',
+                   content=open(file_to_index,'r').read())
+        print("Indexing: %s" % file_to_index)
+        re_indexer = IndexerService.quick_connect()
+        print("Connected!")
+        #print(doc)
+        re_indexer.add_document(**doc)
+    else:
         print("Unknown operation: %s" % args.operation)
         print("Use one of: %s" % ", ".join(ops))
         sys.exit(1)
 
-    #########
-    ## Query Remote instance
-    if args.operation == 'query':
-        port = args.service_port
-        host = args.service_host
-        if port is None:
-            responses = BroadcastCore.bcast_and_recv_responses('yo dawwwwg')
-            if len(responses) == 0:
-                print("Found no indexers, exiting")
-                sys.exit(0)
-
-            print(responses)
-            resp = responses[0]
-            host = resp[1][0]
-            port = int(resp[0].decode('utf-8').split(':')[-1])
-
-        remote_cli_query(host, port)
-        sys.exit(0)
-
-    schema = schemas.get(args.schema, None)
-    schema = schemas['def_schema'] if schema is None else schema
-
-    #########
-    ## Start instance on this machine
-    indexer = IndexerService(index_path=args.index_path,
-                             new_schema=schema,
-                             listen_host=args.service_host,
-                             listen_port=args.service_port)
-    cli_query(query_func=indexer.cb_query, query_args=["content"])
