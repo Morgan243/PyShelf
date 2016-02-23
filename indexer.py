@@ -31,11 +31,14 @@ schemas = dict(
 
 class IndexerService(ServiceModule):
     base_service_name = 'INDEXER'
+
     def __init__(self, index_path='.index',
                  schema_name='default-schema',
                  new_schema=schemas['def_schema'],
                  listen_host=None,
                  listen_port=None):
+        #TODO Use index.exists_in to check index dir
+        # use storage.index_exists() to check for inde??
 
         if new_schema is not None and index_path is None:
             msg = "Mush provide path for new index"
@@ -75,11 +78,20 @@ class IndexerService(ServiceModule):
         self.parser = None
         self.doc_count = 0
         self.idx_p_sec = 0.0
+        self.print_index_stats()
+        self.do_sync = False
         service_name = IndexerService.get_service_name(self.schema_name)
+
 
         ServiceModule.__init__(self, host=listen_host, port=listen_port,
                                service_name=service_name,
                                respond_to_bcasts=True)
+
+    def print_index_stats(self):
+        print("Doc count: %s " % str(self.__index.doc_count()))
+        print("Doc count all: %s " % str(self.__index.doc_count_all()))
+        print("Doc IDs: %s " % ", ".join(map(str, self.__index.reader().all_doc_ids())))
+        print("Doc fields: %s " % ", ".join(map(str, self.__index.reader().all_stored_fields())))
 
     @staticmethod
     def get_service_name(schema_name='default-schema'):
@@ -104,7 +116,7 @@ class IndexerService(ServiceModule):
         return tmp_schema, tmp_index
 
 
-    def wk_run_doc_loader(self, verbose=False):
+    def wk_run_doc_loader(self, verbose=True):
         self.doc_cnt = 0
         # keep loading while the service is up or there is work to do
         if verbose: print("Running doc loader...")
@@ -132,24 +144,31 @@ class IndexerService(ServiceModule):
                                                                         self.idx_p_sec,
                                                                         self.doc_queue.qsize()))
                 except queue.Empty as e:
+                    time.sleep(.1)
                     pass
+
+                if self.do_sync:
+                    print("Committing")
+                    writer.commit()
+                    self.do_sync = False
 
         if verbose:
             print("Doc loader completing")
 
-    def on_connect(self):
-        pass
-
-    def on_disconnect(self):
-        pass
-
     def cb_add_document(self, **doc):
         self.doc_queue.put(doc)
+
+    def cb_sync(self):
+        self.do_sync = True
 
     def cb_query(self, q_str, field=None, raw_results=False):
         print("Query: %s" % q_str)
         if self.parser is None:
+            field = 'content'
             self.parser = QueryParser(field, self.__index.schema)
+            print(field)
+            print(self.__index.schema)
+            print(self.parser)
 
         if not self._searcher.up_to_date():
             self._searcher = self._searcher.refresh()
@@ -164,9 +183,10 @@ class IndexerService(ServiceModule):
             return [str(r) for r in results]
 
     def cb_get_stats(self):
+        self.print_index_stats()
         return dict(qsize=self.doc_queue.qsize(),
                     idxps=self.idx_p_sec,
-                    dcnt=self.doc_cnt)
+                    dcnt=self.__index.doc_count())
 
 
 def fetch_stats(host, port):
@@ -179,7 +199,8 @@ def fetch_stats(host, port):
 def cli_query(query_func=None,
               query_args=None,
               query_kwargs=None,
-              stats_func=None):
+              stats_func=None,
+              sync_func=None):
     query_args = {} if query_args is None else query_args
     query_kwargs = {} if query_kwargs is None else query_kwargs
 
@@ -189,12 +210,23 @@ def cli_query(query_func=None,
             break
         if in_qry == '\s' and stats_func:
             print(stats_func())
+        elif in_qry == '\y' and sync_func:
+            print("calling sync")
+            sync_func()
+            print("done")
         else:
             results = query_func(in_qry, *query_args, **query_kwargs)
 
             print("Found %d results" % len(results))
             print(("\n\t").join((str(r) for r in results)))
 
+
+def recurse_load_files(path):
+    #for root, subdirs, files in os.walk(path):
+    #    print("root: %s" % str(root))
+    #    print("\tsubdirs: %s" % str(subdirs))
+    #    print("\tfiles: %s" % str(files))
+    return [os.path.join(root, f) for root, _, files in os.walk(path) for f in files]
 
 if __name__ == "__main__":
     ops = ['query', 'service']
@@ -220,6 +252,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+
     #########
     ## Query Remote instance
     if args.operation == 'query':
@@ -227,7 +260,8 @@ if __name__ == "__main__":
         print("Connected!")
 
         cli_query(query_func=re_indexer.query,
-                  stats_func=re_indexer.get_stats)
+                  stats_func=re_indexer.get_stats,
+                  sync_func=re_indexer.sync)
         sys.exit(0)
     elif args.operation == 'service':
         schema = schemas.get(args.schema, None)
@@ -240,17 +274,26 @@ if __name__ == "__main__":
                                  listen_host=args.service_host,
                                  listen_port=args.service_port)
         cli_query(query_func=indexer.cb_query, query_args=["content"])
-    elif args.operation == 'index':
+    elif args.operation == 'index' and args.index_files is not None:
         #print(args.operation_args)
-        file_to_index = args.operation_args
-        doc = dict(title=file_to_index,
-                   comment='just_a test',
-                   content=open(file_to_index,'r').read())
-        print("Indexing: %s" % file_to_index)
+        #file_to_index = args.operation_args
+        file_to_index = args.index_files
+        if os.path.isdir(file_to_index):
+            all_file_paths = recurse_load_files(file_to_index)
+            choice = input("%d documents to index, continue? [Y/n]: " % len(all_file_paths))
+            if choice != 'Y':
+                print("Bailing out!")
+                sys.exit(0)
+        else:
+            all_file_path = [file_to_index]
         re_indexer = IndexerService.quick_connect()
         print("Connected!")
-        #print(doc)
-        re_indexer.add_document(**doc)
+        for fti in all_file_paths:
+            doc = dict(title=fti,
+                       comment='just_a test',
+                       content=open(fti, 'r').read())
+            print("Indexing: %s" % fti)
+            re_indexer.add_document(**doc)
     else:
         print("Unknown operation: %s" % args.operation)
         print("Use one of: %s" % ", ".join(ops))
