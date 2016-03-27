@@ -4,31 +4,30 @@ import base64
 import pickle
 from dateutil import parser
 
+# Protocol 2 is compatible with Python 2 and 3
+pickle_protocol = 2
+
 class Parser(object):
     def __init__(self, **kwargs):
         self.parser_map = kwargs
 
     @staticmethod
     def serialize(obj):
-        ser = pickle.dumps(obj)
+        ser = pickle.dumps(obj, pickle_protocol)
         enc = base64.b64encode(ser)
         return enc.decode()
 
     @staticmethod
     def deserialize(enc):
-        #print(enc)
-        #print("="*20)
         ser = base64.b64decode(enc)
-        #print(ser)
-        #print("="*20)
         obj = pickle.loads(ser)
-        #print(obj)
-        #print("="*20)
         return obj
 
+    @staticmethod
     def json_date_to_datetime(json_dt):
         return parser.parse(json_dt)
 
+    @staticmethod
     def datetime_to_json(dt):
         return dt.isoformat()
 

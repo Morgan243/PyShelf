@@ -9,6 +9,8 @@ import requests as r
 import pprint
 import uuid
 
+os.environ['NO_PROXY'] = '127.0.0.1'
+
 # TODO: Detect being run in notebook, and do fancy displays with HTML or other
 
 class Client(object):
@@ -21,6 +23,10 @@ class Client(object):
         self.sync_uri = "http://%s:%d/__ix/sync" % (host, port)
         self.info_uri = "http://%s:%d/__ix/info" % (host, port)
         self.docs_uri = "%s/docs" % self.uri
+
+    #@staticmethod
+    def res_to_dataframe(self, results):
+        return pd.DataFrame(results)
 
     def index(self, **kwargs):
         # get initial dict and convert
@@ -42,7 +48,11 @@ class Client(object):
         resp = r.get(self.uri, params={'q': q_str})
         doc = self.parser.json_to_doc(resp.json())
         if as_dataframe:
-            return pd.DataFrame(doc['results'])
+            res = doc['results']
+            if len(res) == 0:
+                return pd.DataFrame(columns = list(self.schema.keys()))
+            else:
+                return self.res_to_dataframe(doc['results'])#pd.DataFrame(doc['results'])
         else:
             return doc
 
@@ -58,10 +68,9 @@ class Client(object):
 
     def docs(self, as_dataframe=True):
         j_objs = r.get(self.docs_uri).json()
-        #print(j_objs)
         ret_data = [self.parser.json_to_doc(j) for j in j_objs]
         if as_dataframe:
-            return pd.DataFrame(ret_data)
+            return self.res_to_dataframe(ret_data)#pd.DataFrame(ret_data)
         else:
             return ret_data
 
@@ -153,20 +162,24 @@ class NotebookClient(Client):
                                                  code_cells=code_cells,
                                                  markdown_cells=markdown_cells)
 
-    # TODO: generalize by making a to_dataframe method on the derived class
-    def docs(self, as_dataframe=True):
-        ret = super(NotebookClient, self).docs(as_dataframe)
-        if as_dataframe:
-            return ret.set_index('name')
-        else:
-            return ret
+    def res_to_dataframe(self, results):
+        return pd.DataFrame(results).set_index('name')
 
-    def query(self, q_str, as_dataframe=True, **kwargs):
-        ret = super(NotebookClient, self).query(q_str, as_dataframe, **kwargs)
-        if as_dataframe:
-            return ret.set_index('name')
-        else:
-            return ret
+
+    # TODO: generalize by making a to_dataframe method on the derived class
+#    def docs(self, as_dataframe=True):
+#        ret = super(NotebookClient, self).docs(as_dataframe)
+#        if as_dataframe:
+#            return ret.set_index('name')
+#        else:
+#            return ret
+#
+#    def query(self, q_str, as_dataframe=True, **kwargs):
+#        ret = super(NotebookClient, self).query(q_str, as_dataframe, **kwargs)
+#        if as_dataframe:
+#            return ret.set_index('name')
+#        else:
+#            return ret
 
 if __name__ == "__main__":
     #from index_descriptions.python_ix import description as podesc
@@ -179,6 +192,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # Quick hack to index a bunch of notebooks
     if args.indexing_dir is not None:
         in_p = args.indexing_dir
 
