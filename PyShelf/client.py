@@ -147,8 +147,17 @@ class NotebookClient(Client):
             name = os.path.split(path)[-1]
             dt = datetime.datetime.fromtimestamp(os.path.getctime(path))
 
-        code_cells = "\n".join(["\n".join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code'])
-        markdown_cells = "\n".join(["\n".join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'markdown'])
+        try:
+            code_cells = "\n".join(["\n".join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code'])
+        except:
+            print("Unable to get code cells")
+            code_cells = ""
+
+        try:
+            markdown_cells = "\n".join(["\n".join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'markdown'])
+        except:
+            print("Unable to get markdown cells")
+            markdown_cells = ""
 
         if name is None:
             name = str(uuid.uuid1())
