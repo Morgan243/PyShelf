@@ -90,6 +90,7 @@ class Indexer(object):
             self.q_fields = q_fields
         print("Q FIELDS in CTOR: %s" % str(self.q_fields))
         self._searcher = self.__index.searcher()
+        self._buffered_searcher = None
         self.parser = None
         self.doc_count = self.__index.doc_count()
         self.idx_p_sec = 0.0
@@ -137,7 +138,6 @@ class Indexer(object):
         # keep loading while the service is up or there is work to do
         if verbose:
             logging.debug("Running doc loader...")
-        #writer = ix.writer(procs=4, multisegment=True)
 
         w_args = dict(limitmb=128,
                       #procs=4,
@@ -145,17 +145,21 @@ class Indexer(object):
                       )
         #w_args = dict()
 
-        with BufferedWriter(self.__index, period=30, limit=5, writerargs=w_args) as writer:
+        with BufferedWriter(self.__index, period=1, limit=15, writerargs=w_args) as writer:
+            # This searcher is weird...
+            self._buffered_searcher = writer.searcher()
             while self.is_working or self.doc_queue.qsize():
                 try:
                     start_t = time.time()
-                    doc = self.doc_queue.get(timeout=5)
+                    doc = self.doc_queue.get(timeout=1)
                     if self.doc_parser is not None:
                         #p_doc = self.doc_parser.json_to_doc(doc)
                         p_doc = doc
                     else:
                         p_doc = doc
+
                     #writer.add_document(**p_doc)
+
                     # Will not delete existing documents if they haven't been committed
                     writer.update_document(**p_doc)
                     end_t = time.time()
@@ -184,6 +188,9 @@ class Indexer(object):
     def sync(self):
         self.do_sync = True
 
+    def get_searcher(self):
+        return self.__index.searcher()
+
     def query(self, q_str, field=None, raw_results=False, serializer=None):
         logging.debug("Query: %s" % q_str)
         if self.parser is None:
@@ -191,17 +198,30 @@ class Indexer(object):
             #self.parser = QueryParser(field, self.__index.schema)
             logging.info("Query parser on: %s" % str(self.q_fields))
             self.parser = MultifieldParser(self.q_fields, self.__index.schema)
-            print(self.q_fields)
-            print(self.__index.schema)
-            print(self.parser)
-
-        if not self._searcher.up_to_date():
-            self._searcher = self._searcher.refresh()
+            #print(self.q_fields)
+            #print(self.__index.schema)
+            #print(self.parser)
 
         q = self.parser.parse(q_str)
         print(q)
 
-        results = self._searcher.search(q)
+        # get reader closed error
+        #with self.__index.searcher() as searcher:
+        #    results = searcher.search(q)
+
+        # Which searcher should I take?!?!
+        if True:
+            #searcher = self.__index.searcher()
+            searcher = self.get_searcher()
+        elif self._buffered_searcher is not None:
+            print("Using buffered searcher")
+            searcher = self._buffered_searcher
+        elif not self._searcher.up_to_date():
+            print("refreshing searcher")
+            self._searcher = self._searcher.refresh()
+            searcher = self._searcher
+
+        results = searcher.search(q)
 
         if raw_results:
             if serializer is not None:
@@ -216,120 +236,33 @@ class Indexer(object):
 
 
     def get_stats(self):
-        #self.print_index_stats()
         return dict(queue_size=self.doc_queue.qsize(),
                     docs_per_sec=self.idx_p_sec,
-                    doc_cnt=self.__index.doc_count())
+                    doc_cnt=self.__index.doc_count(),
+                    doc_loader_running=self.is_working)
 
-#def cli_query(query_func=None,
-#              query_args=None,
-#              query_kwargs=None,
-#              stats_func=None,
-#              sync_func=None):
-#    query_args = {} if query_args is None else query_args
-#    query_kwargs = {} if query_kwargs is None else query_kwargs
-#
-#    while True:
-#        in_qry = input("Enter Query: ")
-#        if in_qry == '\q':
-#            break
-#        if in_qry == '\s' and stats_func:
-#            print(stats_func())
-#        elif in_qry == '\y' and sync_func:
-#            print("calling sync")
-#            sync_func()
-#            print("done")
-#        else:
-#            results = query_func(in_qry, *query_args, **query_kwargs)
-#
-#            print("Found %d results" % len(results))
-#            print(("\n\t").join((str(r) for r in results)))
-
-
-def recurse_load_files(path):
-    #for root, subdirs, files in os.walk(path):
-    #    print("root: %s" % str(root))
-    #    print("\tsubdirs: %s" % str(subdirs))
-    #    print("\tfiles: %s" % str(files))
-    return [os.path.join(root, f) for root, _, files in os.walk(path) for f in files]
 
 if __name__ == "__main__":
-    ops = ['query', 'service']
+    pass
 
-    parser = argparse.ArgumentParser(description='Indexing Service')
-    #parser.add_argument("operation", metavar='O', type=str,
-    #                    help=", ".join(ops))
-    parser.add_argument('--index_files', metavar='I', type=str,
-                        default=None,
-                        help="Path to files to be indexed")
-    parser.add_argument('--index_path', metavar='I', type=str,
-                        default='.shelf_index',
-                        help="Path to index directory to read on launch")
+    #parser = argparse.ArgumentParser(description='Indexing Service')
+    #parser.add_argument('--index_files', metavar='I', type=str,
+    #                    default=None,
+    #                    help="Path to files to be indexed")
+    #parser.add_argument('--index_path', metavar='I', type=str,
+    #                    default='.shelf_index',
+    #                    help="Path to index directory to read on launch")
 
-    parser.add_argument('--schema', type=str, default=None,
-                        help="Schema name: " + ", ".join(schemas.keys()))
+    #parser.add_argument('--schema', type=str, default=None,
+    #                    help="Schema name: " + ", ".join(schemas.keys()))
 
-    parser.add_argument('--host', dest="service_host", type=str)
-    parser.add_argument('--port', dest="service_port", type=int)
-    parser.add_argument('--query', dest="query", type=str, default=None)
+    #parser.add_argument('--host', dest="service_host", type=str)
+    #parser.add_argument('--port', dest="service_port", type=int)
+    #parser.add_argument('--query', dest="query", type=str, default=None)
 
-    parser.add_argument('--test', dest="run_test", default=0, type=int)
+    #parser.add_argument('--test', dest="run_test", default=0, type=int)
 
-    args = parser.parse_args()
-    schema = schemas.get(args.schema, None)
-    schema = schemas['def_schema'] if schema is None else schema
-
-    #########
-    ## Start instance on this machine
-    #indexer = Indexer(index_path=args.index_path,
-    #                  new_schema=schema,
-    #                  listen_host=args.service_host,
-    #                  listen_port=args.service_port)
-
-
-    #########
-    ## Query Remote instance
-#    if args.operation == 'query':
-#        re_indexer = IndexerService.quick_connect()
-#        print("Connected!")
-#
-#        cli_query(query_func=re_indexer.query,
-#                  stats_func=re_indexer.get_stats,
-#                  sync_func=re_indexer.sync)
-#        sys.exit(0)
-#    elif args.operation == 'service':
-#        schema = schemas.get(args.schema, None)
-#        schema = schemas['def_schema'] if schema is None else schema
-#
-#        #########
-#        ## Start instance on this machine
-#        indexer = IndexerService(index_path=args.index_path,
-#                                 new_schema=schema,
-#                                 listen_host=args.service_host,
-#                                 listen_port=args.service_port)
-#        cli_query(query_func=indexer.cb_query, query_args=["content"])
-#    elif args.operation == 'index' and args.index_files is not None:
-#        #print(args.operation_args)
-#        #file_to_index = args.operation_args
-#        file_to_index = args.index_files
-#        if os.path.isdir(file_to_index):
-#            all_file_paths = recurse_load_files(file_to_index)
-#            choice = input("%d documents to index, continue? [Y/n]: " % len(all_file_paths))
-#            if choice != 'Y':
-#                print("Bailing out!")
-#                sys.exit(0)
-#        else:
-#            all_file_path = [file_to_index]
-#        re_indexer = IndexerService.quick_connect()
-#        print("Connected!")
-#        for fti in all_file_paths:
-#            doc = dict(title=fti,
-#                       comment='just_a test',
-#                       content=open(fti, 'r').read())
-#            print("Indexing: %s" % fti)
-#            re_indexer.add_document(**doc)
-#    else:
-#        print("Unknown operation: %s" % args.operation)
-#        print("Use one of: %s" % ", ".join(ops))
-#        sys.exit(1)
+    #args = parser.parse_args()
+    #schema = schemas.get(args.schema, None)
+    #schema = schemas['def_schema'] if schema is None else schema
 

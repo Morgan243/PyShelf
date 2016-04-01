@@ -5,6 +5,7 @@ from indexer import Indexer
 
 from index_descriptions.file_ix import description as file_desc
 from index_descriptions.python_ix import description as python_desc
+from index_descriptions.notebook_ix import description as notebook_desc
 
 from flask import Flask
 from flask.ext.restful import Api
@@ -33,7 +34,7 @@ def auto_build_indexers(descriptions, indexing_dir='./'):
 
 def create_app(indexing_dir='./'):
     logging.info("Building indexers")
-    desc_to_serve = [file_desc, python_desc]
+    desc_to_serve = [file_desc, python_desc, notebook_desc]
     indexers = auto_build_indexers(desc_to_serve, indexing_dir=indexing_dir)
     parsers = {d['name']: d['parser'] for d in desc_to_serve}
     resource_kwargs = dict(indexers=indexers)
@@ -63,16 +64,6 @@ if __name__ == '__main__':
 
     parser.add_argument('-p', '--index-path', dest='indexing_dir',
                         type=str, default='./')
-    #parser.add_argument('-o', '--output', dest='output',
-    #                    type=str, default=None)
-    #parser.add_argument('-n', '--num-epochs', dest='num_epochs',
-    #                    type=int, default=50)
-    #parser.add_argument('-b', '--batch-size', dest='batch_size',
-    #                    type=int, default=20)
-    #parser.add_argument('-d', '--network-depth', dest='net_depth',
-    #                    type=int, default=10)
-    #parser.add_argument('-w', '--network-width', dest='net_width',
-    #                    type=int, default=100)
 
     args = parser.parse_args()
 

@@ -49,7 +49,7 @@ class Index(Resource):
         #print("form: " + str(request.form))
         #print("data: " + str(request.data))
         post_doc = request.get_json()
-        print("JSON: " + str(post_doc))
+        #print("JSON: " + str(post_doc))
         if post_doc is not None:
             doc = self.parsers[index_name].json_to_doc(post_doc)
             self.indexers[index_name].add_document(**doc)

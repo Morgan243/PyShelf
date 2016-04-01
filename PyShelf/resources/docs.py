@@ -24,6 +24,6 @@ class Docs(Resource):
             return "No indexer for index %s" % index_name
 
         parser = self.parsers[index_name]
-        docs = [parser.doc_to_json(d) for d in indexer._searcher.documents()]
+        docs = [parser.doc_to_json(d) for d in indexer.get_searcher().documents()]
         return docs
 
