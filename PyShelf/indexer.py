@@ -189,18 +189,14 @@ class Indexer(object):
         self.do_sync = True
 
     def get_searcher(self):
+        # TODO: Is this a concurrency problem?
         return self.__index.searcher()
 
     def query(self, q_str, field=None, raw_results=False, serializer=None):
         logging.debug("Query: %s" % q_str)
         if self.parser is None:
-            #field = 'content'
-            #self.parser = QueryParser(field, self.__index.schema)
             logging.info("Query parser on: %s" % str(self.q_fields))
             self.parser = MultifieldParser(self.q_fields, self.__index.schema)
-            #print(self.q_fields)
-            #print(self.__index.schema)
-            #print(self.parser)
 
         q = self.parser.parse(q_str)
         print(q)
@@ -209,7 +205,7 @@ class Indexer(object):
         #with self.__index.searcher() as searcher:
         #    results = searcher.search(q)
 
-        # Which searcher should I take?!?!
+        # TODO: Which searcher should I take?!?!
         if True:
             #searcher = self.__index.searcher()
             searcher = self.get_searcher()
