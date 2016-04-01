@@ -83,9 +83,12 @@ class Indexer(object):
 
         self.doc_queue = queue.Queue()
         if q_fields is None:
-            self.q_fields = [name for name, f in new_schema.items() if isinstance(f, ID) or isinstance(f, TEXT)]
+            type_ok = lambda f: isinstance(f, ID) or isinstance(f, TEXT)
+            print("Building q fields")
+            self.q_fields = [name for name, f in new_schema.items() if type_ok(f) ]
         else:
             self.q_fields = q_fields
+        print("Q FIELDS in CTOR: %s" % str(self.q_fields))
         self._searcher = self.__index.searcher()
         self.parser = None
         self.doc_count = self.__index.doc_count()
@@ -148,7 +151,8 @@ class Indexer(object):
                     start_t = time.time()
                     doc = self.doc_queue.get(timeout=5)
                     if self.doc_parser is not None:
-                        p_doc = self.doc_parser(doc)
+                        #p_doc = self.doc_parser.json_to_doc(doc)
+                        p_doc = doc
                     else:
                         p_doc = doc
                     #writer.add_document(**p_doc)
@@ -165,7 +169,6 @@ class Indexer(object):
                                                                                 self.doc_queue.qsize()))
                 except queue.Empty as e:
                     time.sleep(.1)
-                    pass
 
                 if self.do_sync:
                     logging.debug("%s committing" % self.schema_name)
@@ -181,14 +184,14 @@ class Indexer(object):
     def sync(self):
         self.do_sync = True
 
-    def query(self, q_str, field=None, raw_results=False):
+    def query(self, q_str, field=None, raw_results=False, serializer=None):
         logging.debug("Query: %s" % q_str)
         if self.parser is None:
             #field = 'content'
             #self.parser = QueryParser(field, self.__index.schema)
             logging.info("Query parser on: %s" % str(self.q_fields))
             self.parser = MultifieldParser(self.q_fields, self.__index.schema)
-            print(field)
+            print(self.q_fields)
             print(self.__index.schema)
             print(self.parser)
 
@@ -196,13 +199,21 @@ class Indexer(object):
             self._searcher = self._searcher.refresh()
 
         q = self.parser.parse(q_str)
+        print(q)
 
         results = self._searcher.search(q)
 
         if raw_results:
-            return results
+            if serializer is not None:
+                return serializer(results)
+            else:
+                return results
         else:
-            return [str(r) for r in results]
+            if serializer is not None:
+                return [serializer(r) for r in results]
+            else:
+                return [r for r in results]
+
 
     def get_stats(self):
         #self.print_index_stats()

@@ -4,8 +4,12 @@ class Info(Resource):
     def __init__(self, indexers):
         self.indexers = indexers
 
+    def fields_to_json(self, fields):
+        return {fn: str(ft) for fn, ft in fields.items()}
+
     def make_info(self):
-        return {name: dict(fields=str(ixer.schema._fields), stats=ixer.get_stats())
+        return {name: dict(fields=self.fields_to_json(ixer.schema._fields),
+                           stats=ixer.get_stats())
                 for name, ixer in self.indexers.items()}
 
     def get(self):
