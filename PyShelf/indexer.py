@@ -14,32 +14,37 @@ import logging
 import queue
 import os
 
+from rpyc.utils.server import ThreadedServer, ForkingServer
+import rpyc
+
 ## TODO:
 ## - How does Whoosh support multiple indices
 ## - Posting to index
 
-schemas = dict(
-                def_schema=dict(title=TEXT(stored=True),
-                                comment=TEXT(stored=True),
-                                content=TEXT),
-                web=dict(title=TEXT(stored=True),
-                         url=ID(stored=True, unique=True),
-                         content=TEXT),
-                file=dict(path=ID(stored=True, unique=True),
-                          size=NUMERIC(stored=True),
-                          mod_dt=DATETIME(stored=True),
-                          cretn_dt=DATETIME(stored=True),
-                          owner=ID(stored=True),
-                          group=ID(stored=True))
-              )
+#schemas = dict(
+#                def_schema=dict(title=TEXT(stored=True),
+#                                comment=TEXT(stored=True),
+#                                content=TEXT),
+#                web=dict(title=TEXT(stored=True),
+#                         url=ID(stored=True, unique=True),
+#                         content=TEXT),
+#                file=dict(path=ID(stored=True, unique=True),
+#                          size=NUMERIC(stored=True),
+#                          mod_dt=DATETIME(stored=True),
+#                          cretn_dt=DATETIME(stored=True),
+#                          owner=ID(stored=True),
+#                          group=ID(stored=True))
+#              )
+
+default_schema=dict(title=TEXT(stored=True),
+                    comment=TEXT(stored=True),
+                    content=TEXT),
 
 class Indexer(object):
     def __init__(self, index_path='.index',
                  schema_name='default-schema',
-                 new_schema=schemas['def_schema'],
+                 new_schema=default_schema,
                  q_fields=None,
-                 listen_host=None,
-                 listen_port=None,
                  doc_parser=None,
                  launch_doc_loader=False):
         #TODO Use index.exists_in to check index dir
@@ -88,7 +93,6 @@ class Indexer(object):
             self.q_fields = [name for name, f in new_schema.items() if type_ok(f) ]
         else:
             self.q_fields = q_fields
-        print("Q FIELDS in CTOR: %s" % str(self.q_fields))
         self._searcher = self.__index.searcher()
         self._buffered_searcher = None
         self.parser = None
@@ -151,12 +155,7 @@ class Indexer(object):
             while self.is_working or self.doc_queue.qsize():
                 try:
                     start_t = time.time()
-                    doc = self.doc_queue.get(timeout=1)
-                    if self.doc_parser is not None:
-                        #p_doc = self.doc_parser.json_to_doc(doc)
-                        p_doc = doc
-                    else:
-                        p_doc = doc
+                    p_doc = self.doc_queue.get(timeout=1)
 
                     #writer.add_document(**p_doc)
 
@@ -237,6 +236,13 @@ class Indexer(object):
                     doc_cnt=self.__index.doc_count(),
                     doc_loader_running=self.is_working)
 
+
+def build_exposed_class(indexer):
+    class IndexerService(rpyc.Service):
+        indexer = indexer
+
+        def exposed_query(self, **kwargs):
+            return indexer.query(**kwargs)
 
 if __name__ == "__main__":
     pass
